@@ -1,5 +1,9 @@
 # MillScape — Milling Roughness Explorer + 3D Anomaly Viewer
 
+Authors:
+
+Dumitru-Eugen Mituica, Alvis Misjuns, Mairita Zaķe, Imelda Zadeja
+
 A fully **client-side, browser-based** research tool for machining / additive-manufacturing surface analysis. Import surface line-scan profiles, compute standardized ISO roughness, run a paper-faithful anomaly-detection pipeline, explore a predicted roughness **response surface** over spindle speed × feed rate, and inspect the surface relief in an interactive **3D height-map viewer** with detected anomalies highlighted in red.
 
 No backend. All parsing and computation run in the browser — your research data never leaves the machine. The working set is mirrored to `localStorage`, and an entire session round-trips through JSON export/import. Deployable to GitHub Pages as a static bundle.
@@ -25,10 +29,10 @@ The build uses a **relative base** (`base: './'` in `vite.config.ts`), so the bu
 
 ## What you can do
 
-1. **Import** CSV/TXT line-scan files by drag-and-drop (or *+ Add data*). A popup lists each file with fields for its mill settings and, on first import, the unit factors.
+1. **Import** CSV/TXT line-scan files by drag-and-drop (or _+ Add data_). A popup lists each file with fields for its mill settings and, on first import, the unit factors.
 2. **Describe** each profile — spindle speed [rpm], feed rate [mm/min], milling mode (down/up/reference), name — editable at any time by clicking a row.
 3. **Roughness** — ISO 16610-21 Gaussian-filtered Ra / Rq / Rz, in µm.
-4. **Anomaly detection** — the five-stage pipeline from the source study, producing discrete anomaly *zones* and a before/after comparison against the reference.
+4. **Anomaly detection** — the five-stage pipeline from the source study, producing discrete anomaly _zones_ and a before/after comparison against the reference.
 5. **Response surface** — an interpolated Ra heatmap over spindle × feed, with honest leave-one-out uncertainty, iso-feed-per-rev lines, measured points, a smoothest ★, and a live crosshair. Click or drag to set the working point.
 6. **Speed trade-off** — predicted Ra vs spindle at the current feed-per-rev, marking the current point and the minimum.
 7. **3D relief** — the selected profile as an exaggerated, GPU-lit height map with a viridis/turbo gradient and anomaly zones in red; orbit, zoom, reset, and an honest vertical-exaggeration slider.
@@ -44,11 +48,11 @@ The build uses a **relative base** (`base: './'` in `vite.config.ts`), so the bu
 
 **Two real knobs** are spindle speed and feed rate. Everything else is derived and never asked:
 
-| Quantity | Formula |
-|---|---|
-| Cutting speed `vc` [m/min] | `π · D · n / 1000` |
-| Feed per rev `fpr` [mm] | `vf / n` |
-| Feed per tooth `fz` [mm] | `vf / (n · z)` |
+| Quantity                   | Formula             |
+| -------------------------- | ------------------- |
+| Cutting speed `vc` [m/min] | `π · D · n / 1000`  |
+| Feed per rev `fpr` [mm]    | `vf / n`            |
+| Feed per tooth `fz` [mm]   | `vf / (n · z)`      |
 | Cusp-height floor `h` [µm] | `fz² / (8 · (D/2))` |
 
 Cutting speed is **not** independent — it is fixed by spindle speed.
@@ -96,7 +100,7 @@ Run per profile on the roughness residual `r(x)` (λc split). All thresholds are
 
 The zones' x-positions drive the red highlights in both the 2D profile plot and the 3D relief.
 
-> **Note on the example data.** The study reports only scalar Ra/Rq/Rz, but the viewer and detector need real profiles. MillScape therefore *synthesizes* a faithful 1-D line scan per condition — band-limited (spatially-correlated) noise matching a confocal profilometer's few-µm spot, gentle periodic feed marks, and discrete narrow defects — then scales it so the pipeline's **computed** Ra reproduces the reported value. The as-printed reference carries many discrete defects; milling replaces them with periodic tool marks, so milled surfaces show **fewer** discrete anomalies (a genuine before/after reduction) even where their overall Ra is higher. Every number in the UI is computed from a profile, not hard-coded. Your imported profiles are always computed live.
+> **Note on the example data.** The study reports only scalar Ra/Rq/Rz, but the viewer and detector need real profiles. MillScape therefore _synthesizes_ a faithful 1-D line scan per condition — band-limited (spatially-correlated) noise matching a confocal profilometer's few-µm spot, gentle periodic feed marks, and discrete narrow defects — then scales it so the pipeline's **computed** Ra reproduces the reported value. The as-printed reference carries many discrete defects; milling replaces them with periodic tool marks, so milled surfaces show **fewer** discrete anomalies (a genuine before/after reduction) even where their overall Ra is higher. Every number in the UI is computed from a profile, not hard-coded. Your imported profiles are always computed live.
 
 ---
 
@@ -118,7 +122,7 @@ Known quirks in the example set (surfaced, never silently "fixed"): the 1600 rpm
 
 **Areal grids.** A file of many equal-width numeric rows (≥ 4 columns) is auto-detected as a **rows × cols height matrix** and rendered as a true 2-D height map in the 3D viewer.
 
-**Workflow.** Drag files onto the top bar (or *+ Add data*) → fill in rpm, feed, mode, name (and, first time, unit factors) → **Import**. Click any row later to edit or delete; editing recomputes roughness + anomalies and refreshes every panel. Mark one profile as **Reference (as-printed)** to enable before/after differencing. **Export session** saves raw profiles + metadata + settings as JSON; **Import session** restores it exactly.
+**Workflow.** Drag files onto the top bar (or _+ Add data_) → fill in rpm, feed, mode, name (and, first time, unit factors) → **Import**. Click any row later to edit or delete; editing recomputes roughness + anomalies and refreshes every panel. Mark one profile as **Reference (as-printed)** to enable before/after differencing. **Export session** saves raw profiles + metadata + settings as JSON; **Import session** restores it exactly.
 
 ---
 
@@ -141,3 +145,9 @@ src/
 ```
 
 Recomputation is signature-gated: the heavy roughness+anomaly pass runs only when data or compute-settings change; working-point and display changes take the cheap render path.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

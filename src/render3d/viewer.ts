@@ -8,10 +8,10 @@
 import * as THREE from 'three';
 import type { AnomalyZone, Dataset } from '../types';
 import { viridis, turbo } from '../color';
+import { canvasPalette, theme, type ThemeName } from '../theme';
 
 const SCENE_WIDTH = 3.2; // scene units spanning the full lateral trace length
 const DEPTH = 1.1; // scene units of the swept depth axis
-const BG = 0x0e1116;
 
 export interface ReliefInfo {
   minH: number; // true height range (µm)
@@ -48,9 +48,10 @@ export class Viewer {
   private disposed = false;
 
   constructor(private container: HTMLElement) {
+    const bg = canvasPalette(theme.get()).three;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setClearColor(BG, 1);
+    this.renderer.setClearColor(bg, 1);
     container.appendChild(this.renderer.domElement);
     this.renderer.domElement.style.width = '100%';
     this.renderer.domElement.style.height = '100%';
@@ -59,7 +60,7 @@ export class Viewer {
     this.renderer.domElement.style.cursor = 'grab';
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(BG);
+    this.scene.background = new THREE.Color(bg);
 
     this.camera = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.01, 100);
 
@@ -168,6 +169,12 @@ export class Viewer {
   setShowAnomalies(v: boolean): void {
     this.showAnomalies = v;
     this.applyColors();
+  }
+  setTheme(name: ThemeName): void {
+    const bg = canvasPalette(name).three;
+    this.renderer.setClearColor(bg, 1);
+    this.scene.background = new THREE.Color(bg);
+    this.render();
   }
   getInfo(): ReliefInfo {
     return this.info;

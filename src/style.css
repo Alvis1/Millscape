@@ -9,12 +9,31 @@
   --text-mute: #6b7a8d;
   --accent: #ff7a2f;
   --accent-dim: #b8551f;
+  --accent-rgb: 255, 122, 47;
   --ok: #5ec962;
   --interp: #8ab4f8;
   --warn: #ffcc55;
   --red: #ff4d4d;
   --mono: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+:root[data-theme='light'] {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --panel-3: #e2e7ee;
+  --line: #d8dee7;
+  --text: #1b2430;
+  --text-dim: #46536a;
+  --text-mute: #77869c;
+  --accent: #d35400;
+  --accent-dim: #9c3d00;
+  --accent-rgb: 211, 84, 0;
+  --ok: #2e7d32;
+  --interp: #2f6fd6;
+  --warn: #9a6a00;
+  --red: #c62828;
 }
 
 * {
@@ -28,6 +47,7 @@ body {
   color: var(--text);
   font-family: var(--sans);
   font-size: 14px;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 #app {
   max-width: 1500px;
@@ -62,6 +82,11 @@ body {
   color: var(--text-mute);
   font-size: 12px;
 }
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .honesty {
   font-family: var(--mono);
   font-size: 11px;
@@ -69,6 +94,10 @@ body {
   text-align: right;
   max-width: 640px;
   line-height: 1.5;
+}
+.theme-toggle {
+  flex: none;
+  min-width: 92px;
 }
 
 /* ---------- import bar (panel A) ---------- */
@@ -87,7 +116,7 @@ body {
 }
 .import-bar.drag {
   border-color: var(--accent);
-  background: rgba(255, 122, 47, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 .import-bar-inner {
   display: flex;
@@ -578,7 +607,7 @@ body {
   background: transparent;
 }
 .dm-sel {
-  background: rgba(255, 122, 47, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .dm-cell {

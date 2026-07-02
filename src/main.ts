@@ -17,18 +17,30 @@ import { renderDataManager } from './ui/dataManager';
 import { handleFiles } from './ui/import';
 import { buildExampleDatasets } from './data/example';
 import { el, clear } from './ui/dom';
+import { theme } from './theme';
+
+theme.apply();
 
 const app = document.getElementById('app')!;
 
 // ---------- build skeleton ----------
 const honesty = el('div', { class: 'honesty' });
+const themeBtn = el('button', {
+  class: 'btn compact theme-toggle',
+  title: 'Switch between light and dark mode',
+  'aria-label': 'Switch between light and dark mode',
+}, ['']);
+function syncThemeBtn(): void {
+  themeBtn.textContent = theme.get() === 'dark' ? '☀ Light' : '☾ Dark';
+}
+syncThemeBtn();
 const header = el('header', { class: 'app-header' }, [
   el('div', { class: 'brand' }, [
     el('span', { class: 'brand-mark' }, ['◈']),
     el('span', { class: 'brand-name' }, ['MillScape']),
     el('span', { class: 'brand-sub' }, ['Milling Roughness Explorer + 3D Anomaly Viewer']),
   ]),
-  honesty,
+  el('div', { class: 'header-right' }, [honesty, themeBtn]),
 ]);
 
 // Panel A — import bar
@@ -124,6 +136,12 @@ cmapSel.addEventListener('change', () =>
 );
 anomToggle.addEventListener('change', () => viewer.setShowAnomalies(anomToggle.checked));
 resetViewBtn.addEventListener('click', () => viewer.resetView());
+themeBtn.addEventListener('click', () => {
+  theme.toggle();
+  syncThemeBtn();
+  viewer.setTheme(theme.get());
+  renderAll();
+});
 
 function updateHeightRange(): void {
   const info = viewer.getInfo();

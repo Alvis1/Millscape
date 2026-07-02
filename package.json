@@ -3,6 +3,7 @@
   "private": true,
   "version": "2.0.0",
   "type": "module",
+  "license": "MIT",
   "description": "MillScape — Milling Roughness Explorer + 3D Anomaly Viewer (fully client-side)",
   "scripts": {
     "dev": "vite",

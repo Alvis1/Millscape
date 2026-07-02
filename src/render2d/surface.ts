@@ -5,6 +5,7 @@ import type { Dataset, Settings, WorkingPoint } from '../types';
 import type { ModeFit } from '../interp/index';
 import { predict } from '../interp/index';
 import { rgbCss, viridis } from '../color';
+import { canvasPalette, theme } from '../theme';
 
 export interface SurfaceGeom {
   plot: { x: number; y: number; w: number; h: number };
@@ -26,7 +27,6 @@ export interface SurfaceState {
   hoverId: string | null;
 }
 
-const ACCENT = '#ff7a2f';
 const CB_W = 54; // colorbar strip width (CSS px)
 
 /** Fit rpm/feed domain to the measured data, padded ~12%. */
@@ -70,6 +70,7 @@ export function drawSurface(
   canvas.height = Math.round(cssH * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
+  const pal = canvasPalette(theme.get());
 
   const m = { l: 52, r: CB_W + 30, t: 14, b: 40 };
   const plot = { x: m.l, y: m.t, w: cssW - m.l - m.r, h: cssH - m.t - m.b };
@@ -149,10 +150,10 @@ export function drawSurface(
   ctx.setLineDash([]);
 
   // --- axes frame + ticks ---
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.strokeStyle = pal.lineStrong;
   ctx.lineWidth = 1;
   ctx.strokeRect(plot.x, plot.y, plot.w, plot.h);
-  ctx.fillStyle = 'rgba(230,237,243,0.8)';
+  ctx.fillStyle = pal.text;
   ctx.font = '11px ui-monospace, monospace';
   ctx.textAlign = 'center';
   for (let i = 0; i <= 4; i++) {
@@ -167,7 +168,7 @@ export function drawSurface(
     ctx.fillText(String(Math.round(feed)), plot.x - 6, py + 3);
   }
   ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(230,237,243,0.65)';
+  ctx.fillStyle = pal.textDim;
   ctx.fillText('Spindle speed [rpm]', plot.x + plot.w / 2, cssH - 6);
   ctx.save();
   ctx.translate(12, plot.y + plot.h / 2);
@@ -190,12 +191,12 @@ export function drawSurface(
     ctx.lineWidth = hovered ? 2.5 : 1.5;
     ctx.strokeStyle = '#ffffff';
     ctx.stroke();
-    if (d.id === state.smoothestId) drawStar(ctx, px, py, ACCENT);
+    if (d.id === state.smoothestId) drawStar(ctx, px, py, pal.accent);
   }
 
   // --- crosshair at working point ---
   const [cx, cy] = toPx(state.working.spindleSpeed, state.working.feedRate);
-  ctx.strokeStyle = ACCENT;
+  ctx.strokeStyle = pal.accent;
   ctx.lineWidth = 1.5;
   ctx.setLineDash([3, 3]);
   ctx.beginPath();
@@ -207,14 +208,14 @@ export function drawSurface(
   ctx.setLineDash([]);
   ctx.beginPath();
   ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-  ctx.fillStyle = ACCENT;
+  ctx.fillStyle = pal.accent;
   ctx.fill();
   ctx.strokeStyle = '#0e1116';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
   // --- colorbar ---
-  drawColorbar(ctx, cssW - CB_W - 8, plot.y, CB_W - 24, plot.h, state.raMax);
+  drawColorbar(ctx, cssW - CB_W - 8, plot.y, CB_W - 24, plot.h, state.raMax, pal);
 
   return {
     plot,
@@ -263,6 +264,7 @@ function drawColorbar(
   w: number,
   h: number,
   raMax: number,
+  pal: ReturnType<typeof canvasPalette>,
 ): void {
   const n = 64;
   for (let i = 0; i < n; i++) {
@@ -270,10 +272,10 @@ function drawColorbar(
     ctx.fillStyle = rgbCss(viridis(t));
     ctx.fillRect(x, y + (i / n) * h, w, h / n + 1);
   }
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.strokeStyle = pal.lineStrong;
   ctx.lineWidth = 1;
   ctx.strokeRect(x, y, w, h);
-  ctx.fillStyle = 'rgba(230,237,243,0.8)';
+  ctx.fillStyle = pal.text;
   ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = 'left';
   for (let i = 0; i <= 4; i++) {
@@ -285,7 +287,7 @@ function drawColorbar(
   ctx.translate(x + w + 30, y + h / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(230,237,243,0.6)';
+  ctx.fillStyle = pal.textDim;
   ctx.fillText('Ra [µm]', 0, 0);
   ctx.restore();
 }

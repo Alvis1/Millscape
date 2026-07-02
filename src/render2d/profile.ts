@@ -7,9 +7,7 @@ import type { Dataset, Settings, UnitsConfig, WorkingPoint } from '../types';
 import type { ModeFit } from '../interp/index';
 import { predict } from '../interp/index';
 import { fromUm } from '../units';
-
-const ACCENT = '#ff7a2f';
-const RED = '#ff4d4d';
+import { canvasPalette, theme } from '../theme';
 
 function setup(canvas: HTMLCanvasElement): {
   ctx: CanvasRenderingContext2D;
@@ -34,11 +32,12 @@ export function drawProfile(
   showAnomalies: boolean,
 ): void {
   const { ctx, w, h } = setup(canvas);
+  const pal = canvasPalette(theme.get());
   const m = { l: 46, r: 10, t: 10, b: 22 };
   const plot = { x: m.l, y: m.t, w: w - m.l - m.r, h: h - m.t - m.b };
 
   if (!dataset || !dataset.roughness) {
-    ctx.fillStyle = 'rgba(230,237,243,0.5)';
+    ctx.fillStyle = pal.textMute;
     ctx.font = '12px ui-monospace, monospace';
     ctx.textAlign = 'center';
     ctx.fillText('No profile selected', w / 2, h / 2);
@@ -71,10 +70,10 @@ export function drawProfile(
   }
 
   // frame + zero line
-  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.strokeStyle = pal.line;
   ctx.lineWidth = 1;
   ctx.strokeRect(plot.x, plot.y, plot.w, plot.h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.strokeStyle = pal.lineFaint;
   ctx.beginPath();
   ctx.moveTo(plot.x, plot.y + plot.h / 2);
   ctx.lineTo(plot.x + plot.w, plot.y + plot.h / 2);
@@ -88,13 +87,13 @@ export function drawProfile(
     if (i === 0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
-  ctx.strokeStyle = '#8ab4f8';
+  ctx.strokeStyle = pal.interp;
   ctx.lineWidth = 1;
   ctx.stroke();
 
   // red markers on flagged samples
   if (showAnomalies && dataset.anomaly) {
-    ctx.fillStyle = RED;
+    ctx.fillStyle = pal.red;
     const flags = dataset.anomaly.pointFlags;
     for (let i = 0; i < n; i += 1) {
       if (flags[i]) {
@@ -105,7 +104,7 @@ export function drawProfile(
   }
 
   // axis labels
-  ctx.fillStyle = 'rgba(230,237,243,0.7)';
+  ctx.fillStyle = pal.textDim;
   ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = 'right';
   ctx.fillText(`+${fromUm(rmax, units.yDisplay).toFixed(2)}`, plot.x - 4, plot.y + 8);
@@ -118,7 +117,7 @@ export function drawProfile(
   );
   ctx.textAlign = 'right';
   const zc = dataset.anomaly ? dataset.anomaly.zoneCount : 0;
-  ctx.fillStyle = showAnomalies ? RED : 'rgba(230,237,243,0.6)';
+  ctx.fillStyle = showAnomalies ? pal.red : pal.textMute;
   ctx.fillText(`${zc} anomaly zones`, plot.x + plot.w, plot.y + plot.h + 16);
 }
 
@@ -135,16 +134,17 @@ export function drawTradeoff(
   state: TradeoffState,
 ): void {
   const { ctx, w, h } = setup(canvas);
+  const pal = canvasPalette(theme.get());
   const m = { l: 46, r: 12, t: 10, b: 22 };
   const plot = { x: m.l, y: m.t, w: w - m.l - m.r, h: h - m.t - m.b };
   const { fit, working, settings } = state;
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.strokeStyle = pal.line;
   ctx.lineWidth = 1;
   ctx.strokeRect(plot.x, plot.y, plot.w, plot.h);
 
   if (fit.points.length === 0) {
-    ctx.fillStyle = 'rgba(230,237,243,0.5)';
+    ctx.fillStyle = pal.textMute;
     ctx.font = '12px ui-monospace, monospace';
     ctx.textAlign = 'center';
     ctx.fillText('No data for this mode', w / 2, h / 2);
@@ -183,7 +183,7 @@ export function drawTradeoff(
     if (i === 0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
-  ctx.strokeStyle = '#5ec962';
+  ctx.strokeStyle = pal.ok;
   ctx.lineWidth = 1.75;
   ctx.stroke();
 
@@ -191,11 +191,11 @@ export function drawTradeoff(
   const minRpm =
     state.rpmMin + (minIdx / (N - 1)) * (state.rpmMax - state.rpmMin);
   const [mx, my] = toPx(minRpm, raMin);
-  ctx.fillStyle = '#5ec962';
+  ctx.fillStyle = pal.ok;
   ctx.beginPath();
   ctx.arc(mx, my, 4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = 'rgba(230,237,243,0.75)';
+  ctx.fillStyle = pal.text;
   ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = 'center';
   ctx.fillText(`min ${Math.round(minRpm)}rpm`, mx, my - 6);
@@ -205,20 +205,20 @@ export function drawTradeoff(
     working.spindleSpeed,
     predict(fit, working.spindleSpeed, working.feedRate, settings.bandwidth).Ra,
   );
-  ctx.strokeStyle = ACCENT;
+  ctx.strokeStyle = pal.accent;
   ctx.setLineDash([3, 3]);
   ctx.beginPath();
   ctx.moveTo(cx, plot.y);
   ctx.lineTo(cx, plot.y + plot.h);
   ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle = ACCENT;
+  ctx.fillStyle = pal.accent;
   ctx.beginPath();
   ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
   ctx.fill();
 
   // labels
-  ctx.fillStyle = 'rgba(230,237,243,0.7)';
+  ctx.fillStyle = pal.textDim;
   ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = 'left';
   ctx.fillText(`Ra @ ${fpr.toFixed(3)} mm/rev`, plot.x + 2, plot.y + 10);
