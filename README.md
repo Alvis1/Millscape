@@ -35,7 +35,9 @@ The build uses a **relative base** (`base: './'` in `vite.config.ts`), so the bu
 4. **Anomaly detection** — the five-stage pipeline from the source study, producing discrete anomaly _zones_ and a before/after comparison against the reference.
 5. **Response surface** — an interpolated Ra heatmap over spindle × feed, with honest leave-one-out uncertainty, iso-feed-per-rev lines, measured points, a smoothest ★, and a live crosshair. Click or drag to set the working point.
 6. **Speed trade-off** — predicted Ra vs spindle at the current feed-per-rev, marking the current point and the minimum.
-7. **3D relief** — a GPU-lit height map with a viridis/turbo gradient; orbit, zoom, reset, and an honest vertical-exaggeration slider. For the example set, each condition ships a confocal **surface photograph** (`datasamples/<name>_pic.jpg`) that is used as a **displacement map**: the photo's luminance drives per-vertex height, rescaled so the relief's RMS matches the profile's measured Ra (so the vertical scale stays µm-honest). Areal-grid imports render as a true 2-D height map; a plain 1-D line-scan import with no photo falls back to sweeping the profile along the depth axis.
+7. **3D relief** — a GPU-lit height map with a viridis/turbo gradient; orbit, zoom, reset, and an honest vertical-exaggeration slider. For the example set, each condition ships a confocal **surface photograph** (`datasamples/<name>_pic.jpg`) used as a **displacement map**: the photo's luminance drives per-vertex height, rescaled so the relief's RMS matches the profile's measured Ra (so the vertical scale stays µm-honest). Areal-grid imports render as a true 2-D height map; a plain 1-D line-scan import with no photo falls back to sweeping the profile along the depth axis.
+   - **Interpolated relief (click/drag).** Clicking or dragging the response surface to an arbitrary spindle × feed point morphs the 3D relief live: the neighbouring measured surfaces' displacement fields are blended with the same Nadaraya–Watson kernel weights that drive the Ra surface, and the amplitude is renormalised to the interpolated Ra. It is labelled **interpolated (indicative)** / **extrapolated (low-confidence)** — the blended texture is a genuine morph but, because the photos are not spatially registered, tool-mark striations soften between measured points and sharpen back to full detail as you approach one. On a measured point (or a selected row) the true photo is shown untouched.
+   - **Anomaly highlighting (red).** Because a 2-D relief has no registration to the 1-D scan's anomaly x-positions, anomalies are flagged directly on the displayed field — outlier-height cells (robust sigma-clipped `|h − mean| > 3.5·σ`) are painted red. Toggle with **Anomalies (red)**. The 2-D profile plot keeps the pipeline's registered 1-D zones.
 
 ---
 
@@ -135,9 +137,9 @@ src/
   parse/      dual-format CSV/TXT + areal-grid parser, unit scaling
   roughness/  ISO 16610-21 Gaussian filter, Ra/Rq/Rz
   anomaly/    5-stage detection pipeline + before/after differencing
-  interp/     Nadaraya–Watson regression, leave-one-out MAE
+  interp/     Nadaraya–Watson regression, leave-one-out MAE, kernel-weighted neighbours
   render2d/   response surface, speed-tradeoff, profile plot (Canvas 2D)
-  render3d/   Three.js orthographic viewer (photo displacement map / height grid)
+  render3d/   Three.js viewer + fieldBlend (interpolated displacement-map morph)
   store/      in-memory session mirrored to localStorage; JSON export/import
   ui/         layout, controls, import/edit popups, units panel, data manager
   data/       embedded example dataset + faithful profile synthesis + surface photos

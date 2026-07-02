@@ -5,6 +5,8 @@
 // camera with a hand-rolled orbit (no OrbitControls build dependency), a
 // vertical-exaggeration slider (literal geometric scaling of height vs lateral,
 // so it stays honest), a viridis/turbo height gradient, and anomaly zones in red.
+// Interpolated blend fields (see fieldBlend.ts) are pushed in via applyBlendField
+// for a continuous morph as the working point moves.
 import * as THREE from 'three';
 import type { AnomalyZone, Dataset } from '../types';
 import { viridis, turbo } from '../color';
@@ -21,6 +23,11 @@ export interface ReliefInfo {
    *  height range is a photo-derived (Ra-scaled) estimate, not a true metrology
    *  measurement. */
   isImage: boolean;
+  /** True when the relief is an interpolated blend of neighbouring surfaces
+   *  (indicative texture, amplitude tied to the interpolated Ra). */
+  interpolated: boolean;
+  /** True when the working point is outside the measured rpm/fpr range. */
+  extrapolated: boolean;
   cols: number;
   rows: number;
 }
@@ -31,6 +38,9 @@ export interface ReliefInfo {
 const IMAGE_FIELD_UM = 8000;
 /** Max mesh dimension when sampling a photo (detail vs. vertex budget). */
 const IMAGE_MAX_DIM = 200;
+/** Robust z-threshold for flagging outlier-height cells on a 2-D field (matches
+ *  the anomaly pipeline's Hampel default). */
+const ANOM_FIELD_Z = 3.5;
 
 export class Viewer {
   private renderer: THREE.WebGLRenderer;
@@ -41,6 +51,11 @@ export class Viewer {
   private baseHeights: Float32Array = new Float32Array(0); // µm, per vertex
   private colsN = 0;
   private lateralScale = 1; // scene units per µm (height, at exaggeration ×1)
+  /** Scalar amplitude morph for the D4 fallback (nearest photo shown at full
+   *  sharpness, height rescaled toward the interpolated Ra). 1 = untouched. */
+  private amplitudeScale = 1;
+  private isInterp = false; // current relief is an interpolated blend
+  private isExtrap = false; // current working point is extrapolated
 
   private azimuth = Math.PI * 0.25;
   private elevation = Math.PI * 0.28;
@@ -55,6 +70,8 @@ export class Viewer {
     maxH: 0,
     isGrid: false,
     isImage: false,
+    interpolated: false,
+    extrapolated: false,
     cols: 0,
     rows: 0,
   };
@@ -206,10 +223,7 @@ export class Viewer {
     return this.info;
   }
 
-  /** Build the relief mesh from a dataset. Preference order: surface-photo
-   *  displacement map (example set) → areal height grid → swept 1-D line scan. */
-  setDataset(dataset: Dataset | null): void {
-    const token = ++this.loadToken;
+  private disposeMesh(): void {
     if (this.mesh) {
       this.scene.remove(this.mesh);
       this.geom?.dispose();
@@ -217,8 +231,27 @@ export class Viewer {
       this.mesh = null;
       this.geom = null;
     }
+  }
+
+  /** Build the relief mesh from a dataset. Preference order: surface-photo
+   *  displacement map (example set) → areal height grid → swept 1-D line scan. */
+  setDataset(dataset: Dataset | null): void {
+    const token = ++this.loadToken;
+    this.isInterp = false;
+    this.isExtrap = false;
+    this.amplitudeScale = 1;
+    this.disposeMesh();
     if (!dataset || !dataset.roughness) {
-      this.info = { minH: 0, maxH: 0, isGrid: false, isImage: false, cols: 0, rows: 0 };
+      this.info = {
+        minH: 0,
+        maxH: 0,
+        isGrid: false,
+        isImage: false,
+        interpolated: false,
+        extrapolated: false,
+        cols: 0,
+        rows: 0,
+      };
       this.render();
       this.onInfo?.();
       return;
@@ -233,6 +266,69 @@ export class Viewer {
     } else {
       this.buildSwept(dataset);
     }
+  }
+
+  /** D4 fallback: rescale the current relief's height amplitude by a scalar
+   *  (nearest photo/mesh shown at full sharpness, morphed toward the
+   *  interpolated Ra). No-op-guarded; safe before an async mesh exists. */
+  setAmplitude(scale: number): void {
+    const s = isFinite(scale) && scale > 0 ? scale : 1;
+    if (s === this.amplitudeScale) return;
+    this.amplitudeScale = s;
+    this.applyHeights();
+    this.onInfo?.();
+  }
+
+  /**
+   * Push an interpolated blend field (µm heights on a `dim`×`dim` square grid,
+   * amplitude already = interpolated Ra) into the mesh. Fast path: when the
+   * current mesh is already an interpolated square of the same size, only the
+   * height/colour attributes are rewritten in place — so dragging morphs
+   * smoothly with no geometry reallocation.
+   */
+  applyBlendField(field: Float32Array, dim: number, opts: { extrapolated: boolean }): void {
+    // Invalidate any in-flight photo decode so a late onload can't clobber us.
+    ++this.loadToken;
+    this.isInterp = true;
+    this.isExtrap = opts.extrapolated;
+    this.amplitudeScale = 1;
+    this.zones = [];
+    this.xData = [];
+    this.lateralScale = SCENE_WIDTH / IMAGE_FIELD_UM;
+    const depthExtent = SCENE_WIDTH; // square
+
+    if (
+      this.mesh &&
+      this.geom &&
+      this.info.interpolated &&
+      this.info.cols === dim &&
+      this.info.rows === dim &&
+      this.baseHeights.length === field.length
+    ) {
+      // FAST PATH — in-place attribute update (every drag frame after the first)
+      this.baseHeights.set(field);
+      let mn = Infinity;
+      let mx = -Infinity;
+      for (let i = 0; i < field.length; i++) {
+        const h = field[i];
+        if (h < mn) mn = h;
+        if (h > mx) mx = h;
+      }
+      this.info = {
+        ...this.info,
+        minH: isFinite(mn) ? mn : 0,
+        maxH: isFinite(mx) ? mx : 0,
+        extrapolated: opts.extrapolated,
+      };
+      this.applyHeights();
+      this.applyColors();
+      this.onInfo?.();
+      return;
+    }
+
+    // SLOW PATH — first blend frame or grid dims changed.
+    this.disposeMesh();
+    this.buildPlane(dim, dim, (c, r) => field[r * dim + c], false, depthExtent, true);
   }
 
   /** Surface photo → displacement map. Luminance drives per-vertex height,
@@ -424,6 +520,8 @@ export class Viewer {
       maxH: isFinite(maxH) ? maxH : 0,
       isGrid,
       isImage,
+      interpolated: this.isInterp,
+      extrapolated: this.isExtrap,
       cols,
       rows,
     };
@@ -437,7 +535,8 @@ export class Viewer {
     if (!this.geom) return;
     const pos = this.geom.getAttribute('position') as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
-    const yScale = this.lateralScale * this.exaggeration; // scene units per µm
+    // scene units per µm, incl. the D4 scalar amplitude morph
+    const yScale = this.lateralScale * this.exaggeration * this.amplitudeScale;
     for (let i = 0; i < this.baseHeights.length; i++) {
       arr[i * 3 + 1] = this.baseHeights[i] * yScale;
     }
@@ -455,13 +554,31 @@ export class Viewer {
     const span = maxH - minH || 1;
     const cmap = this.colormap === 'turbo' ? turbo : viridis;
 
+    // Anomaly highlighting has two honest sources:
+    //  • 2-D fields (photo, blend, areal grid) have no registration to the 1-D
+    //    scan, so we flag outlier-height cells detected on the field itself.
+    //  • a swept 1-D line scan IS registered, so we keep the pipeline's x-zones.
+    const isField = this.info.isImage || this.info.isGrid || this.info.interpolated;
+    let aMean = 0;
+    let aLim = Infinity;
+    if (this.showAnomalies && isField) {
+      const st = this.fieldStats();
+      aMean = st.mean;
+      aLim = st.std > 0 ? ANOM_FIELD_Z * st.std : Infinity;
+    }
+
     for (let i = 0; i < this.baseHeights.length; i++) {
       const t = (this.baseHeights[i] - minH) / span;
       let [r, g, b] = cmap(t);
-      if (this.showAnomalies && !this.info.isGrid) {
-        const c = i % this.colsN;
-        const xv = this.xData[c];
-        if (xv != null && this.inZone(xv)) {
+      if (this.showAnomalies) {
+        let flag = false;
+        if (isField) {
+          flag = Math.abs(this.baseHeights[i] - aMean) > aLim;
+        } else {
+          const xv = this.xData[i % this.colsN];
+          flag = xv != null && this.inZone(xv);
+        }
+        if (flag) {
           r = 235;
           g = 45;
           b = 45;
@@ -473,6 +590,46 @@ export class Viewer {
     }
     color.needsUpdate = true;
     this.render();
+  }
+
+  /** Robust mean/std of the current height field (one sigma-clip pass so the
+   *  sparse outliers we want to flag don't inflate the threshold that finds
+   *  them). Used for field-based anomaly highlighting. */
+  private fieldStats(): { mean: number; std: number } {
+    const h = this.baseHeights;
+    const n = h.length;
+    if (n === 0) return { mean: 0, std: 0 };
+    let s = 0;
+    for (let i = 0; i < n; i++) s += h[i];
+    let mean = s / n;
+    let ss = 0;
+    for (let i = 0; i < n; i++) {
+      const d = h[i] - mean;
+      ss += d * d;
+    }
+    let std = Math.sqrt(ss / n) || 0;
+    if (std > 0) {
+      const lim = 3 * std;
+      let s2 = 0;
+      let c2 = 0;
+      for (let i = 0; i < n; i++) {
+        if (Math.abs(h[i] - mean) < lim) {
+          s2 += h[i];
+          c2++;
+        }
+      }
+      if (c2 > 0) {
+        const m2 = s2 / c2;
+        let ss2 = 0;
+        for (let i = 0; i < n; i++) {
+          const d = h[i] - m2;
+          if (Math.abs(d) < lim) ss2 += d * d;
+        }
+        mean = m2;
+        std = Math.sqrt(ss2 / c2) || std;
+      }
+    }
+    return { mean, std };
   }
 
   private inZone(x: number): boolean {

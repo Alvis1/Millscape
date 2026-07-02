@@ -211,6 +211,50 @@ export function predict(
   };
 }
 
+/** One measured neighbor's normalized contribution to a query point. */
+export interface NeighborWeight {
+  point: FitPoint;
+  /** Kernel weight normalized so the returned set sums to 1. */
+  weight: number;
+}
+
+/**
+ * Top-k measured neighbors of a query point with Gaussian-kernel weights
+ * normalized to sum to 1 — the same kernel `predict` uses, exposed so the 3D
+ * viewer can blend the neighbors' height fields consistently with the Ra
+ * surface. Falls back to the single nearest point (weight 1) if all weights
+ * underflow. Returns [] when the mode has no measured points.
+ */
+export function weightedNeighbors(
+  fit: ModeFit,
+  spindleSpeed: number,
+  feedRate: number,
+  bandwidth: number,
+  k = 4,
+): NeighborWeight[] {
+  if (fit.points.length === 0 || !(spindleSpeed > 0)) return [];
+
+  const fpr = feedRate / spindleSpeed;
+  const qx = normLog(spindleSpeed, fit.norm);
+  const qy = normFpr(fpr, fit.norm);
+  const h2 = 2 * bandwidth * bandwidth;
+
+  const scored = fit.points.map((point) => {
+    const dx = qx - point.fx;
+    const dy = qy - point.fy;
+    const w = Math.exp(-(dx * dx + dy * dy) / h2);
+    return { point, w };
+  });
+  scored.sort((a, b) => b.w - a.w);
+
+  const top = scored.slice(0, Math.max(1, Math.min(k, scored.length)));
+  let wSum = 0;
+  for (const s of top) wSum += s.w;
+  // All weights underflowed ⇒ snap to the single nearest neighbor.
+  if (wSum < 1e-12) return [{ point: top[0].point, weight: 1 }];
+  return top.map((s) => ({ point: s.point, weight: s.w / wSum }));
+}
+
 /** Leave-one-out MAE on Ra (null if fewer than 2 points). */
 function leaveOneOutMae(points: FitPoint[], bandwidth: number): number | null {
   if (points.length < 2) return null;

@@ -6,11 +6,12 @@ import './style.css';
 import type { Dataset } from './types';
 import { store } from './store/index';
 import { recomputeAll, kinematics } from './compute';
-import { buildFit, predict, smoothestPoint } from './interp/index';
-import type { ModeFit } from './interp/index';
+import { buildFit, predict, smoothestPoint, weightedNeighbors } from './interp/index';
+import type { ModeFit, Prediction } from './interp/index';
 import { drawSurface } from './render2d/surface';
 import { drawProfile, drawTradeoff } from './render2d/profile';
 import { Viewer } from './render3d/viewer';
+import { FieldBlendCache, FIELD_DIM } from './render3d/fieldBlend';
 import { createControls } from './ui/controls';
 import type { Controls } from './ui/controls';
 import { renderDataManager } from './ui/dataManager';
@@ -150,17 +151,33 @@ function updateHeightRange(): void {
   const info = viewer.getInfo();
   const yu = store.settings.units.yDisplay;
   const toU = (um: number) => (yu === 'µm' ? um : yu === 'mm' ? um / 1e3 : um / 1e6);
+  const kind = currentReliefKind;
   if (info.maxH === 0 && info.minH === 0) {
-    heightRange.textContent = info.isImage ? 'photo relief: —' : 'true height: —';
-  } else {
-    // A photo displacement map has no metrology depth calibration; its heights
-    // are the luminance relief rescaled so RMS ≈ the measured Ra, so we label it
-    // as an estimate rather than a true measured height range.
-    const prefix = info.isImage ? 'photo relief ≈' : 'true height';
-    heightRange.textContent = `${prefix} ${toU(info.minH).toFixed(3)} … ${toU(
-      info.maxH,
-    ).toFixed(3)} ${yu} (×${exagInput.value} shown)`;
+    heightRange.textContent =
+      kind === 'interpolated'
+        ? 'interpolated relief: —'
+        : kind === 'extrapolated'
+          ? 'extrapolated relief: —'
+          : info.isImage
+            ? 'photo relief: —'
+            : 'true height: —';
+    return;
   }
+  // Interpolated/photo reliefs have no metrology depth calibration — their
+  // amplitude is the interpolated (or measured) Ra, so they are labelled as
+  // estimates, never as a "true height". The D4 amplitude morph scales the raw
+  // field heights by currentAmpScale (blend bakes Ra in, so its scale is 1).
+  const lo = toU(info.minH * currentAmpScale);
+  const hi = toU(info.maxH * currentAmpScale);
+  const prefix =
+    kind === 'interpolated'
+      ? 'interpolated relief ≈'
+      : kind === 'extrapolated'
+        ? 'extrapolated relief · low-confidence ≈'
+        : info.isImage
+          ? 'photo relief ≈'
+          : 'true height';
+  heightRange.textContent = `${prefix} ${lo.toFixed(3)} … ${hi.toFixed(3)} ${yu} (×${exagInput.value} shown)`;
 }
 
 // ---------- controls ----------
@@ -290,7 +307,41 @@ let fits: { down: ModeFit; up: ModeFit } = {
   down: buildFit([], 'down', 0.16),
   up: buildFit([], 'up', 0.16),
 };
-let lastReliefId: string | null = null;
+type ReliefKind = 'measured' | 'interpolated' | 'extrapolated';
+/** Stable identity of what the 3D viewer currently shows; a mesh rebuild fires
+ *  only when this changes (the interpolated blend uses the constant key 'blend'
+ *  so interior dragging updates in place, not by rebuilding). */
+let reliefKey = '';
+let currentAmpScale = 1;
+let currentReliefKind: ReliefKind = 'measured';
+
+// Interpolation cache: each example photo decoded once → common-grid unit-RMS
+// field, blended on demand as the working point moves.
+const fieldCache = new FieldBlendCache();
+const blendBuf = new Float32Array(FIELD_DIM * FIELD_DIM);
+const BLEND_K = 3; // neighbours combined per blend (small ⇒ crisp tool marks)
+let blendRafPending = false;
+fieldCache.onReady = () => {
+  // A photo finished decoding — re-render once (coalesced) so a cold-cache
+  // amplitude-morph fallback upgrades to a genuine blend when fields arrive.
+  if (blendRafPending) return;
+  blendRafPending = true;
+  requestAnimationFrame(() => {
+    blendRafPending = false;
+    renderAll();
+  });
+};
+
+function warmFields(): void {
+  fieldCache.preload(
+    store.datasets
+      .filter((d) => d.imageUrl)
+      .map((d) => ({ id: d.id, url: d.imageUrl! })),
+  );
+}
+
+const clamp = (v: number, lo: number, hi: number): number =>
+  Math.max(lo, Math.min(hi, v));
 
 function computeSig(): string {
   const s = store.settings;
@@ -344,6 +395,92 @@ function reliefDataset(currentFit: ModeFit): { d: Dataset | null; label: string 
     }
   }
   return { d: null, label: '' };
+}
+
+/** What the 3D relief should render at the current working point. */
+type ReliefPlan =
+  | {
+      kind: 'dataset';
+      d: Dataset | null;
+      label: string; // full display text for the 3D card
+      key: string;
+      ampScale: number;
+      reliefKind: ReliefKind;
+    }
+  | {
+      kind: 'blend';
+      neighborNames: string[];
+      ra: number;
+      extrapolated: boolean;
+      key: 'blend';
+    };
+
+/**
+ * Decide the 3D relief for the current working point:
+ *   • explicit selection / on a measured point → the true measured photo;
+ *   • an interior point with ≥1 cache-ready neighbour photo → a genuine
+ *     weighted blend (morphs continuously as you drag);
+ *   • otherwise (cold cache / photoless import) → the nearest surface with its
+ *     height amplitude morphed toward the interpolated Ra.
+ * Amplitude is always tied to the interpolated Ra so the µm scale stays honest.
+ */
+function decideRelief(currentFit: ModeFit, pred: Prediction): ReliefPlan {
+  const bw = store.settings.bandwidth;
+  const { spindleSpeed, feedRate } = store.working;
+
+  if (store.selectedId) {
+    const d = store.datasetById(store.selectedId);
+    if (d) {
+      const base = d.millingMode === 'reference' ? 'as-printed reference' : 'measured';
+      const label = `${d.name} · ${base}${d.imageUrl ? ' · photo relief' : ''}`;
+      return { kind: 'dataset', d, label, key: `ds:${d.id}`, ampScale: 1, reliefKind: 'measured' };
+    }
+  }
+  if (!pred.nearest) {
+    return { kind: 'dataset', d: null, label: '', key: 'none', ampScale: 1, reliefKind: 'measured' };
+  }
+  const nearest = store.datasetById(pred.nearest.id) ?? null;
+
+  // Essentially coincident with a measured point → show its true photo.
+  if (pred.onMeasured && nearest) {
+    const label = `${nearest.name} · measured${nearest.imageUrl ? ' · photo relief' : ''}`;
+    return { kind: 'dataset', d: nearest, label, key: `ds:${nearest.id}`, ampScale: 1, reliefKind: 'measured' };
+  }
+
+  // Interior/extrapolated point → try a genuine blend of cache-ready photos.
+  const photo = weightedNeighbors(currentFit, spindleSpeed, feedRate, bw, BLEND_K)
+    .map((n) => ({ id: n.point.id, name: n.point.name, weight: n.weight }))
+    .filter((n) => !!store.datasetById(n.id)?.imageUrl && fieldCache.ready(n.id));
+  if (photo.length >= 1) {
+    const used = fieldCache.blend(photo, pred.Ra, BLEND_K, blendBuf);
+    if (used >= 1) {
+      return {
+        kind: 'blend',
+        neighborNames: photo.slice(0, used).map((p) => p.name),
+        ra: pred.Ra,
+        extrapolated: pred.extrapolated,
+        key: 'blend',
+      };
+    }
+  }
+
+  // Fallback: amplitude morph of the nearest real surface (cold cache / no photo).
+  const baseRa = nearest?.roughness?.Ra ?? 0;
+  const amp = baseRa > 0 && isFinite(pred.Ra) ? clamp(pred.Ra / baseRa, 0.2, 5) : 1;
+  const reliefKind: ReliefKind = pred.extrapolated ? 'extrapolated' : 'interpolated';
+  const head = pred.extrapolated ? 'extrapolated (low-confidence)' : 'interpolated';
+  const label = nearest
+    ? `${nearest.name} · ${head} · nearest texture · Ra ≈ ${pred.Ra.toFixed(3)} µm`
+    : '';
+  return { kind: 'dataset', d: nearest, label, key: `ds:${nearest?.id ?? 'none'}`, ampScale: amp, reliefKind };
+}
+
+function reliefLabelText(plan: ReliefPlan): string {
+  if (plan.kind === 'blend') {
+    const head = plan.extrapolated ? 'extrapolated (low-confidence)' : 'interpolated';
+    return `${head} · blend of ${plan.neighborNames.join(', ')} · Ra ≈ ${plan.ra.toFixed(3)} µm`;
+  }
+  return plan.d ? plan.label : 'no profile';
 }
 
 /** Units sanity guards (spec §3): trace-length and kinematic height-scale floor. */
@@ -406,6 +543,7 @@ function renderAll(): void {
   const recomputed = sig !== lastSig;
   if (recomputed) {
     recomputeAll(store.datasets, store.settings);
+    warmFields(); // decode example photos into the blend cache (idempotent)
     lastSig = sig;
   }
   const bw = store.settings.bandwidth;
@@ -453,15 +591,29 @@ function renderAll(): void {
   });
   drawProfile(profileCanvas, relief.d, store.settings.units, anomToggle.checked);
 
-  // 3D — rebuild only when the shown profile changes or data recomputed
-  if (relief.d?.id !== lastReliefId || recomputed) {
-    viewer.setDataset(relief.d);
-    lastReliefId = relief.d?.id ?? null;
-    updateHeightRange();
+  // 3D — interpolated blend / amplitude morph / true measured photo.
+  const plan = decideRelief(currentFit, pred);
+  currentAmpScale = plan.kind === 'blend' ? 1 : plan.ampScale;
+  currentReliefKind =
+    plan.kind === 'blend'
+      ? plan.extrapolated
+        ? 'extrapolated'
+        : 'interpolated'
+      : plan.reliefKind;
+  // A mesh rebuild fires only when the shown identity changes (or on recompute);
+  // the blend keeps the constant key 'blend', so interior dragging updates in
+  // place via applyBlendField every frame instead of rebuilding the geometry.
+  if (plan.key !== reliefKey || recomputed) {
+    if (plan.kind === 'dataset') viewer.setDataset(plan.d);
+    reliefKey = plan.key;
   }
-  reliefLabel.textContent = relief.d
-    ? `${relief.d.name} · ${relief.label}${relief.d.imageUrl ? ' · photo relief' : ''}`
-    : 'no profile';
+  if (plan.kind === 'blend') {
+    viewer.applyBlendField(blendBuf, FIELD_DIM, { extrapolated: plan.extrapolated });
+  } else {
+    viewer.setAmplitude(currentAmpScale);
+  }
+  updateHeightRange();
+  reliefLabel.textContent = reliefLabelText(plan);
 
   // data manager
   clear(dmInner);
