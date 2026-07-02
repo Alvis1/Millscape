@@ -125,6 +125,9 @@ app.append(header, importBar, layout, dmMount);
 
 // ---------- 3D viewer ----------
 const viewer = new Viewer(viewerMount);
+// Photo displacement maps decode asynchronously; refresh the height read-out
+// once the relief (and its height range) is ready.
+viewer.onInfo = () => updateHeightRange();
 exagInput.addEventListener('input', () => {
   const v = parseFloat(exagInput.value);
   exagVal.textContent = `×${v}`;
@@ -148,9 +151,13 @@ function updateHeightRange(): void {
   const yu = store.settings.units.yDisplay;
   const toU = (um: number) => (yu === 'µm' ? um : yu === 'mm' ? um / 1e3 : um / 1e6);
   if (info.maxH === 0 && info.minH === 0) {
-    heightRange.textContent = 'true height: —';
+    heightRange.textContent = info.isImage ? 'photo relief: —' : 'true height: —';
   } else {
-    heightRange.textContent = `true height ${toU(info.minH).toFixed(3)} … ${toU(
+    // A photo displacement map has no metrology depth calibration; its heights
+    // are the luminance relief rescaled so RMS ≈ the measured Ra, so we label it
+    // as an estimate rather than a true measured height range.
+    const prefix = info.isImage ? 'photo relief ≈' : 'true height';
+    heightRange.textContent = `${prefix} ${toU(info.minH).toFixed(3)} … ${toU(
       info.maxH,
     ).toFixed(3)} ${yu} (×${exagInput.value} shown)`;
   }
@@ -453,7 +460,7 @@ function renderAll(): void {
     updateHeightRange();
   }
   reliefLabel.textContent = relief.d
-    ? `${relief.d.name} · ${relief.label}`
+    ? `${relief.d.name} · ${relief.label}${relief.d.imageUrl ? ' · photo relief' : ''}`
     : 'no profile';
 
   // data manager

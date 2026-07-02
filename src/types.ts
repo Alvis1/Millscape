@@ -84,6 +84,8 @@ export interface Dataset {
   millingMode: MillingMode;
   /** Raw profile stored in internal µm units (already unit-scaled). */
   profile: Profile;
+  /** Surface-photo URL used as a 3D displacement map (example set only). */
+  imageUrl?: string;
   /** True for the seeded example set. */
   isExample?: boolean;
   /** Cached computed results (recomputed on settings/edit changes). */

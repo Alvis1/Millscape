@@ -17,9 +17,20 @@ export interface ReliefInfo {
   minH: number; // true height range (µm)
   maxH: number;
   isGrid: boolean;
+  /** True when the relief comes from a surface-photo displacement map, so the
+   *  height range is a photo-derived (Ra-scaled) estimate, not a true metrology
+   *  measurement. */
+  isImage: boolean;
   cols: number;
   rows: number;
 }
+
+/** Photos are a surface field of the same order as the 8 mm line scan; assume
+ *  an 8 mm lateral extent so the exaggeration slider stays µm-consistent with
+ *  the swept/areal paths. */
+const IMAGE_FIELD_UM = 8000;
+/** Max mesh dimension when sampling a photo (detail vs. vertex budget). */
+const IMAGE_MAX_DIM = 200;
 
 export class Viewer {
   private renderer: THREE.WebGLRenderer;
@@ -39,7 +50,22 @@ export class Viewer {
   private showAnomalies = true;
   private zones: AnomalyZone[] = [];
   private xData: number[] = [];
-  private info: ReliefInfo = { minH: 0, maxH: 0, isGrid: false, cols: 0, rows: 0 };
+  private info: ReliefInfo = {
+    minH: 0,
+    maxH: 0,
+    isGrid: false,
+    isImage: false,
+    cols: 0,
+    rows: 0,
+  };
+
+  /** Bumped on every setDataset so a slow async image load that resolves after
+   *  the user has already switched profiles is discarded instead of clobbering
+   *  the newer mesh. */
+  private loadToken = 0;
+  /** Called whenever the relief (and thus `info`) changes, including after an
+   *  async photo load — lets the host refresh the height-range read-out. */
+  onInfo: (() => void) | null = null;
 
   private dragging = false;
   private lastX = 0;
@@ -180,8 +206,10 @@ export class Viewer {
     return this.info;
   }
 
-  /** Build the relief mesh from a dataset (line scan or areal grid). */
+  /** Build the relief mesh from a dataset. Preference order: surface-photo
+   *  displacement map (example set) → areal height grid → swept 1-D line scan. */
   setDataset(dataset: Dataset | null): void {
+    const token = ++this.loadToken;
     if (this.mesh) {
       this.scene.remove(this.mesh);
       this.geom?.dispose();
@@ -190,18 +218,79 @@ export class Viewer {
       this.geom = null;
     }
     if (!dataset || !dataset.roughness) {
-      this.info = { minH: 0, maxH: 0, isGrid: false, cols: 0, rows: 0 };
+      this.info = { minH: 0, maxH: 0, isGrid: false, isImage: false, cols: 0, rows: 0 };
       this.render();
+      this.onInfo?.();
       return;
     }
 
     this.zones = this.showZonesFor(dataset);
     const grid = dataset.profile.grid;
-    if (grid) {
+    if (dataset.imageUrl) {
+      this.buildFromImage(dataset, dataset.imageUrl, token);
+    } else if (grid) {
       this.buildGrid(dataset, grid.rows, grid.cols);
     } else {
       this.buildSwept(dataset);
     }
+  }
+
+  /** Surface photo → displacement map. Luminance drives per-vertex height,
+   *  rescaled so the relief's RMS ≈ the profile's measured Ra (µm) — keeping the
+   *  vertical scale honest and the exaggeration slider consistent with the other
+   *  paths. Async (image decode); guarded by `token` against dataset switches. */
+  private buildFromImage(dataset: Dataset, url: string, token: number): void {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      if (this.disposed || token !== this.loadToken) return;
+      const aspect = img.naturalHeight / img.naturalWidth || 1;
+      const cols = img.naturalWidth >= img.naturalHeight
+        ? IMAGE_MAX_DIM
+        : Math.max(2, Math.round(IMAGE_MAX_DIM / aspect));
+      const rows = img.naturalWidth >= img.naturalHeight
+        ? Math.max(2, Math.round(IMAGE_MAX_DIM * aspect))
+        : IMAGE_MAX_DIM;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = cols;
+      canvas.height = rows;
+      const cx = canvas.getContext('2d');
+      if (!cx) return;
+      cx.drawImage(img, 0, 0, cols, rows);
+      const px = cx.getImageData(0, 0, cols, rows).data;
+
+      // Perceptual luminance per cell, mean-subtracted then unit-RMS normalized.
+      const lum = new Float32Array(cols * rows);
+      let mean = 0;
+      for (let i = 0; i < cols * rows; i++) {
+        const l = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+        lum[i] = l;
+        mean += l;
+      }
+      mean /= cols * rows || 1;
+      let ss = 0;
+      for (let i = 0; i < lum.length; i++) {
+        lum[i] -= mean;
+        ss += lum[i] * lum[i];
+      }
+      const rms = Math.sqrt(ss / (lum.length || 1)) || 1;
+      // Scale so the photo relief's RMS matches the measured Ra (µm).
+      const ra = dataset.roughness?.Ra ?? 1;
+      const scale = ra / rms;
+      for (let i = 0; i < lum.length; i++) lum[i] *= scale;
+
+      this.xData = [];
+      this.lateralScale = SCENE_WIDTH / IMAGE_FIELD_UM;
+      const depthExtent = SCENE_WIDTH * (rows / (cols || 1));
+      this.buildPlane(cols, rows, (c, r) => lum[r * cols + c], true, depthExtent, true);
+    };
+    img.onerror = () => {
+      if (this.disposed || token !== this.loadToken) return;
+      // Fall back to the swept line scan if the photo can't be decoded.
+      this.buildSwept(dataset);
+    };
+    img.src = url;
   }
 
   private showZonesFor(dataset: Dataset): AnomalyZone[] {
@@ -270,6 +359,7 @@ export class Viewer {
     heightAt: (c: number, r: number) => number,
     isGrid: boolean,
     depthExtent: number,
+    isImage = false,
   ): void {
     this.colsN = cols;
     const geom = new THREE.BufferGeometry();
@@ -333,12 +423,14 @@ export class Viewer {
       minH: isFinite(minH) ? minH : 0,
       maxH: isFinite(maxH) ? maxH : 0,
       isGrid,
+      isImage,
       cols,
       rows,
     };
 
     this.applyHeights();
     this.applyColors();
+    this.onInfo?.();
   }
 
   private applyHeights(): void {

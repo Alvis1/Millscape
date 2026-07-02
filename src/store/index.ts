@@ -2,6 +2,7 @@
 // UI can re-render on change. JSON Export/Import round-trips the whole session.
 import type { Dataset, Session, Settings, WorkingPoint } from '../types';
 import { standardUnits } from '../units';
+import { imageForName } from '../data/images';
 
 const STORAGE_KEY = 'millscape.session.v2';
 const SESSION_VERSION = 2;
@@ -216,6 +217,10 @@ function normalizeSession(s: Session): Session {
     delete d.roughness;
     delete d.anomaly;
     delete d.delta;
+    // Re-derive the displacement-map URL from the dataset name: it is a
+    // per-build fingerprinted asset path, so a persisted/exported value would
+    // go stale (404) after a rebuild. Only the seeded example set ships photos.
+    d.imageUrl = d.isExample ? imageForName(d.name) ?? undefined : undefined;
   }
   return merged;
 }

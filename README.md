@@ -35,7 +35,7 @@ The build uses a **relative base** (`base: './'` in `vite.config.ts`), so the bu
 4. **Anomaly detection** — the five-stage pipeline from the source study, producing discrete anomaly _zones_ and a before/after comparison against the reference.
 5. **Response surface** — an interpolated Ra heatmap over spindle × feed, with honest leave-one-out uncertainty, iso-feed-per-rev lines, measured points, a smoothest ★, and a live crosshair. Click or drag to set the working point.
 6. **Speed trade-off** — predicted Ra vs spindle at the current feed-per-rev, marking the current point and the minimum.
-7. **3D relief** — the selected profile as an exaggerated, GPU-lit height map with a viridis/turbo gradient and anomaly zones in red; orbit, zoom, reset, and an honest vertical-exaggeration slider.
+7. **3D relief** — a GPU-lit height map with a viridis/turbo gradient; orbit, zoom, reset, and an honest vertical-exaggeration slider. For the example set, each condition ships a confocal **surface photograph** (`datasamples/<name>_pic.jpg`) that is used as a **displacement map**: the photo's luminance drives per-vertex height, rescaled so the relief's RMS matches the profile's measured Ra (so the vertical scale stays µm-honest). Areal-grid imports render as a true 2-D height map; a plain 1-D line-scan import with no photo falls back to sweeping the profile along the depth axis.
 
 ---
 
@@ -137,11 +137,14 @@ src/
   anomaly/    5-stage detection pipeline + before/after differencing
   interp/     Nadaraya–Watson regression, leave-one-out MAE
   render2d/   response surface, speed-tradeoff, profile plot (Canvas 2D)
-  render3d/   Three.js orthographic height-map viewer
+  render3d/   Three.js orthographic viewer (photo displacement map / height grid)
   store/      in-memory session mirrored to localStorage; JSON export/import
   ui/         layout, controls, import/edit popups, units panel, data manager
-  data/       embedded example dataset + faithful profile synthesis
+  data/       embedded example dataset + faithful profile synthesis + surface photos
+  theme.ts    light/dark theme store (+ canvas palette for the renderers)
   compute.ts  kinematics + recompute orchestration
+datasamples/  raw source data — per-condition line scans (<name>.csv) and
+              surface photographs (<name>_pic.jpg), bundled by Vite for the viewer
 ```
 
 Recomputation is signature-gated: the heavy roughness+anomaly pass runs only when data or compute-settings change; working-point and display changes take the cheap render path.

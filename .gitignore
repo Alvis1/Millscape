@@ -1,6 +1,5 @@
 node_modules/
 dist/
-datasamples/
 *.local
 .DS_Store
 .vite/

@@ -7,6 +7,7 @@
 import type { Dataset, MillingMode, Profile, Settings } from '../types';
 import { computeRoughness } from '../roughness/index';
 import { makeId } from '../store/index';
+import { imageForName } from './images';
 
 interface Seed {
   name: string;
@@ -214,6 +215,7 @@ export function buildExampleDatasets(settings: Settings): Dataset[] {
     feedRate: seed.feedRate,
     millingMode: seed.millingMode,
     profile: synthProfile(seed, settings),
+    imageUrl: imageForName(seed.name) ?? undefined,
     isExample: true,
   }));
 }
